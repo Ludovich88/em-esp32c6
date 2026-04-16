@@ -43,6 +43,9 @@
 #define D_CMND_FREQUENCYCAL "FrequencyCal"
 #define D_CMND_TARIFF "Tariff"
 #define D_CMND_MODULEADDRESS "ModuleAddress"
+#define D_CMND_ENERGYGENERATEDTODAY "EnergyGeneratedToday"
+#define D_CMND_ENERGYGENERATEDYESTERDAY "EnergyGeneratedYesterday"
+#define D_CMND_ENERGYGENERATEDTOTAL "EnergyGeneratedTotal"
 
 enum EnergyDisplayModes {
   ENERGY_DISPLAY_MIN_OPTION,
@@ -63,6 +66,7 @@ const char kEnergyCommands[] PROGMEM = "|"  // No prefix
   D_CMND_MAXENERGY "|" D_CMND_MAXENERGYSTART "|"
   D_CMND_MAXPOWER "|" D_CMND_MAXPOWERHOLD "|" D_CMND_MAXPOWERWINDOW "|"
   D_CMND_ENERGYTODAY "|" D_CMND_ENERGYYESTERDAY "|" D_CMND_ENERGYTOTAL "|" D_CMND_ENERGYEXPORTACTIVE "|" D_CMND_ENERGYUSAGE "|" D_CMND_ENERGYEXPORT "|"
+  D_CMND_ENERGYGENERATEDTODAY "|" D_CMND_ENERGYGENERATEDYESTERDAY "|" D_CMND_ENERGYGENERATEDTOTAL "|"
   D_CMND_TARIFF "|" D_CMND_ENERGYDISPLAY "|" D_CMND_ENERGYCOLS ;
 
 void (* const EnergyCommand[])(void) PROGMEM = {
@@ -72,6 +76,7 @@ void (* const EnergyCommand[])(void) PROGMEM = {
   &CmndMaxEnergy, &CmndMaxEnergyStart,
   &CmndMaxPower, &CmndMaxPowerHold, &CmndMaxPowerWindow,
   &CmndEnergyToday, &CmndEnergyYesterday, &CmndEnergyTotal, &CmndEnergyExportActive, &CmndEnergyUsage, &CmndEnergyExport,
+  &CmndEnergyGeneratedToday, &CmndEnergyGeneratedYesterday, &CmndEnergyGeneratedTotal,
   &CmndTariff, &CmndEnergyDisplay, &CmndEnergyCols };
 
 /********************************************************************************************/
@@ -141,6 +146,9 @@ typedef struct {
   float energy_yesterday_kWh[ENERGY_MAX_PHASES];      // Energy yesterday in kWh - float allows up to 262143.99 kWh
   float energy_total_kWh[ENERGY_MAX_PHASES];          // Total energy in kWh - float allows up to 262143.99 kWh
   float energy_export_kWh[ENERGY_MAX_PHASES];         // Export energy in kWh - float allows up to 262143.99 kWh
+  float generated_today_kWh[ENERGY_MAX_PHASES];       // Generated today in kWh (export only)
+  float generated_yesterday_kWh[ENERGY_MAX_PHASES];   // Generated yesterday in kWh (export only)
+  float generated_total_kWh[ENERGY_MAX_PHASES];       // Generated total in kWh (export only)
 
   uint16_t power_delta[ENERGY_MAX_PHASES];            // PowerDelta
 
@@ -180,6 +188,9 @@ typedef struct {
   float period_kWh[ENERGY_MAX_PHASES];          // 123.12312 kWh = Energy->daily
   float daily_sum_import_balanced;              // 123.123 kWh
   float daily_sum_export_balanced;              // 123.123 kWh
+  float generated_sum;                          // 123.123 kWh generated today sum
+  float generated_total_sum;                    // 12345.123 kWh generated total sum
+  float generated_yesterday_sum;                // 123.123 kWh generated yesterday sum
 
   uint16_t power_history[3][ENERGY_MAX_PHASES];
   uint16_t mpl_hold_counter[ENERGY_MAX_PHASES];
@@ -234,6 +245,8 @@ typedef struct {
   float energy_today_kWh[ENERGY_MAX_PHASES];
   float energy_total_kWh[ENERGY_MAX_PHASES];
   float energy_export_kWh[ENERGY_MAX_PHASES];
+  float generated_today_kWh[ENERGY_MAX_PHASES];
+  float generated_total_kWh[ENERGY_MAX_PHASES];
 } tRtcEnergySettings;
 tRtcEnergySettings RtcEnergySettings;
 static RTC_NOINIT_ATTR tRtcEnergySettings RtcDataEnergySettings;
@@ -261,6 +274,8 @@ void EnergyRtcSettingsSave(void) {
         RtcEnergySettings.energy_today_kWh[i] = Energy->Settings.energy_today_kWh[i];
         RtcEnergySettings.energy_total_kWh[i] = Energy->Settings.energy_total_kWh[i];
         RtcEnergySettings.energy_export_kWh[i] = Energy->Settings.energy_export_kWh[i];
+        RtcEnergySettings.generated_today_kWh[i] = Energy->Settings.generated_today_kWh[i];
+        RtcEnergySettings.generated_total_kWh[i] = Energy->Settings.generated_total_kWh[i];
       }
     }
 
@@ -289,7 +304,7 @@ bool EnergyRtcSettingsValid(void) {
  * Driver Settings load and save using filesystem
 \*********************************************************************************************/
 
-const uint16_t XDRV_03_VERSION = 0x0102;              // Latest driver version (See settings deltas below)
+const uint16_t XDRV_03_VERSION = 0x0103;              // Latest driver version (See settings deltas below)
 
 void EnergySettingsLoad(bool erase) {
   // *** Start init default values in case file is not found ***
@@ -330,6 +345,7 @@ void EnergySettingsLoad(bool erase) {
     Energy->Settings.energy_yesterday_kWh[i] = (float)Settings->energy_kWhyesterday_ph[i] / 100000;
     Energy->Settings.energy_total_kWh[i] = (float)Settings->energy_kWhtotal_ph[i] / 1000;
     Energy->Settings.energy_export_kWh[i] = (float)Settings->energy_kWhexport_ph[i] / 1000;
+    Energy->Settings.generated_total_kWh[i] = Energy->Settings.energy_export_kWh[i];
 
     Energy->Settings.power_delta[i] = (float)Settings->energy_power_delta[i];
 
@@ -362,6 +378,14 @@ void EnergySettingsLoad(bool erase) {
       if (Energy->Settings.version < 0x0102) {
         Energy->Settings.gui_display = ENERGY_GUI_DISPLAY_MODE;
         Energy->Settings.gui_cols = ENERGY_GUI_MAX_COLS;
+      }
+      if (Energy->Settings.version < 0x0103) {
+        // Backward-compatible initialization for generated energy fields
+        for (uint32_t i = 0; i < ENERGY_MAX_PHASES; i++) {
+          Energy->Settings.generated_total_kWh[i] = Energy->Settings.energy_export_kWh[i];
+          Energy->Settings.generated_today_kWh[i] = 0.0f;
+          Energy->Settings.generated_yesterday_kWh[i] = 0.0f;
+        }
       }
 
       // *** End setting deltas ***
@@ -537,26 +561,47 @@ void EnergyUpdateToday(void) {
   Energy->yesterday_sum = 0.0f;
   Energy->daily_sum = 0.0f;
   int32_t delta_sum_balanced = 0;
+  bool import_only_today = Settings->flag6.no_export_energy_today;
+#ifdef FIRMWARE_EM_ESP32C6
+  import_only_today = true;
+#endif
 
   for (uint32_t i = 0; i < Energy->phase_count; i++) {
     if (abs(Energy->kWhtoday_delta[i]) > 1000) {
       int32_t delta = Energy->kWhtoday_delta[i] / 1000;
       delta_sum_balanced += delta;
       Energy->kWhtoday_delta[i] -= (delta * 1000);
-      if (!Settings->flag6.no_export_energy_today || (delta > 0)) {  // SetOption162 - (Energy) Do not add export energy to energy today (1)
+      if (!import_only_today || (delta > 0)) {  // SetOption162 - (Energy) Do not add export energy to energy today (1)
         Energy->kWhtoday[i] += delta;
       }
       if (delta < 0) {     // Export energy
         RtcEnergySettings.energy_export_kWh[i] += (((float)delta / 100) *-1) / 1000;
+        RtcEnergySettings.generated_today_kWh[i] += (((float)delta / 100) *-1) / 1000;
       }
     }
 
+#ifdef FIRMWARE_EM_ESP32C6
+    if (Energy->kWhtoday[i] < 0) {
+      Energy->kWhtoday[i] = 0;
+    }
+#endif
     RtcEnergySettings.energy_today_kWh[i] = Energy->energy_today_offset_kWh[i] + ((float)Energy->kWhtoday[i] / 100000);
+#ifdef FIRMWARE_EM_ESP32C6
+    if (RtcEnergySettings.energy_today_kWh[i] < 0) {
+      RtcEnergySettings.energy_today_kWh[i] = 0;
+    }
+#endif
     Energy->daily_kWh[i] = RtcEnergySettings.energy_today_kWh[i];
     Energy->total[i] = RtcEnergySettings.energy_total_kWh[i] + RtcEnergySettings.energy_today_kWh[i];
+#ifdef FIRMWARE_EM_ESP32C6
+    if (Energy->total[i] < 0) {
+      Energy->total[i] = 0;
+    }
+#endif
     if (Energy->local_energy_active_export) {
       Energy->export_active[i] = RtcEnergySettings.energy_export_kWh[i];
     }
+    Energy->Settings.generated_today_kWh[i] = RtcEnergySettings.generated_today_kWh[i];
 
     Energy->total_sum += Energy->total[i];
     Energy->yesterday_sum += Energy->Settings.energy_yesterday_kWh[i];
@@ -587,6 +632,15 @@ void EnergyUpdateToday(void) {
       }
       return_diff = export_active - RtcEnergySettings.energy_usage.last_return_total_kWh;
       RtcEnergySettings.energy_usage.last_return_total_kWh = export_active;
+    }
+
+    Energy->generated_sum = 0.0f;
+    Energy->generated_yesterday_sum = 0.0f;
+    Energy->generated_total_sum = 0.0f;
+    for (uint32_t i = 0; i < Energy->phase_count; i++) {
+      Energy->generated_sum += RtcEnergySettings.generated_today_kWh[i];
+      Energy->generated_yesterday_sum += Energy->Settings.generated_yesterday_kWh[i];
+      Energy->generated_total_sum += RtcEnergySettings.generated_total_kWh[i];
     }
 
     uint32_t index = (EnergyTariff1Active()) ? 0 : 1;  // Tarrif1 = Off-Peak
@@ -671,16 +725,21 @@ void Energy200ms(void) {
 
         for (uint32_t i = 0; i < ENERGY_MAX_PHASES; i++) {
           Energy->Settings.energy_yesterday_kWh[i] = RtcEnergySettings.energy_today_kWh[i];
+          Energy->Settings.generated_yesterday_kWh[i] = RtcEnergySettings.generated_today_kWh[i];
 
           RtcEnergySettings.energy_total_kWh[i] += RtcEnergySettings.energy_today_kWh[i];
           Energy->Settings.energy_total_kWh[i] = RtcEnergySettings.energy_total_kWh[i];
           Energy->Settings.energy_export_kWh[i] = RtcEnergySettings.energy_export_kWh[i];
+          RtcEnergySettings.generated_total_kWh[i] += RtcEnergySettings.generated_today_kWh[i];
+          Energy->Settings.generated_total_kWh[i] = RtcEnergySettings.generated_total_kWh[i];
 
           Energy->period_kWh[i] -= RtcEnergySettings.energy_today_kWh[i];     // this becomes a large unsigned, effectively a negative for EnergyShow calculation
           Energy->kWhtoday[i] = Energy->kWhtoday[i] % 100;            // Roll fractional watt-hours into the next day since kWhtotal truncates to watt-hours.
           Energy->energy_today_offset_kWh[i] = 0;
           RtcEnergySettings.energy_today_kWh[i] = Energy->kWhtoday[i];
           Energy->Settings.energy_today_kWh[i] = 0;
+          RtcEnergySettings.generated_today_kWh[i] = 0.0f;
+          Energy->Settings.generated_today_kWh[i] = 0.0f;
 
           Energy->start_energy[i] = 0;
 //        Energy->kWhtoday_delta = 0;                                 // dont zero this, we need to carry the remainder over to tomorrow
@@ -717,6 +776,8 @@ void EnergySaveState(void) {
     Energy->Settings.energy_today_kWh[i] = RtcEnergySettings.energy_today_kWh[i];
     Energy->Settings.energy_total_kWh[i] = RtcEnergySettings.energy_total_kWh[i];
     Energy->Settings.energy_export_kWh[i] = RtcEnergySettings.energy_export_kWh[i];
+    Energy->Settings.generated_today_kWh[i] = RtcEnergySettings.generated_today_kWh[i];
+    Energy->Settings.generated_total_kWh[i] = RtcEnergySettings.generated_total_kWh[i];
   }
 
   Energy->Settings.energy_usage = RtcEnergySettings.energy_usage;
@@ -999,8 +1060,14 @@ void EnergyEverySecond(void) {
 
 void ResponseCmndEnergyTotalYesterdayToday(void) {
   float energy_yesterday_kWh[3];
+  float generated_yesterday_kWh[3];
+  float generated_today_kWh[3];
+  float generated_total_kWh[3];
   for (uint32_t i = 0; i < Energy->phase_count; i++) {
     energy_yesterday_kWh[i] = Energy->Settings.energy_yesterday_kWh[i];
+    generated_yesterday_kWh[i] = Energy->Settings.generated_yesterday_kWh[i];
+    generated_today_kWh[i] = RtcEnergySettings.generated_today_kWh[i];
+    generated_total_kWh[i] = RtcEnergySettings.generated_total_kWh[i];
     Energy->total[i] = RtcEnergySettings.energy_total_kWh[i] + Energy->energy_today_offset_kWh[i] + ((float)Energy->kWhtoday[i] / 100000);
     if (Energy->local_energy_active_export) {
       Energy->export_active[i] = RtcEnergySettings.energy_export_kWh[i];
@@ -1014,6 +1081,12 @@ void ResponseCmndEnergyTotalYesterdayToday(void) {
     EnergyFmt(energy_yesterday_kWh, Settings->flag2.energy_resolution));
   ResponseAppend_P(PSTR(",\"" D_JSON_TODAY "\":%s"),
     EnergyFmt(Energy->daily_kWh, Settings->flag2.energy_resolution));
+  ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_TOTAL "\":%s"),
+    EnergyFmt(generated_total_kWh, Settings->flag2.energy_resolution));
+  ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_YESTERDAY "\":%s"),
+    EnergyFmt(generated_yesterday_kWh, Settings->flag2.energy_resolution));
+  ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_TODAY "\":%s"),
+    EnergyFmt(generated_today_kWh, Settings->flag2.energy_resolution));
   if (Energy->local_energy_active_export) {
     ResponseAppend_P(PSTR(",\"" D_JSON_EXPORT_ACTIVE "\":%s"),
       EnergyFmt(Energy->export_active, Settings->flag2.energy_resolution));
@@ -1169,6 +1242,38 @@ void CmndEnergyExport(void) {
     Energy->Settings.energy_usage.return_total_kWh[1] = RtcEnergySettings.energy_usage.return_total_kWh[1];
   }
   ResponseCmndEnergyUsageExport();
+}
+
+void CmndEnergyGeneratedTotal(void) {
+  uint32_t values[2] = { 0 };
+  uint32_t params = ParseParameters(2, values);
+  if ((XdrvMailbox.index > 0) && (XdrvMailbox.index <= Energy->phase_count) && (params > 0)) {
+    uint32_t phase = XdrvMailbox.index -1;
+    RtcEnergySettings.generated_total_kWh[phase] = (float)(int32_t)values[0] / 1000;
+    Energy->Settings.generated_total_kWh[phase] = RtcEnergySettings.generated_total_kWh[phase];
+  }
+  ResponseCmndEnergyTotalYesterdayToday();
+}
+
+void CmndEnergyGeneratedYesterday(void) {
+  uint32_t values[2] = { 0 };
+  uint32_t params = ParseParameters(2, values);
+  if ((XdrvMailbox.index > 0) && (XdrvMailbox.index <= Energy->phase_count) && (params > 0)) {
+    uint32_t phase = XdrvMailbox.index -1;
+    Energy->Settings.generated_yesterday_kWh[phase] = (float)(int32_t)values[0] / 1000;
+  }
+  ResponseCmndEnergyTotalYesterdayToday();
+}
+
+void CmndEnergyGeneratedToday(void) {
+  uint32_t values[2] = { 0 };
+  uint32_t params = ParseParameters(2, values);
+  if ((XdrvMailbox.index > 0) && (XdrvMailbox.index <= Energy->phase_count) && (params > 0)) {
+    uint32_t phase = XdrvMailbox.index -1;
+    RtcEnergySettings.generated_today_kWh[phase] = (float)(int32_t)values[0] / 1000;
+    Energy->Settings.generated_today_kWh[phase] = RtcEnergySettings.generated_today_kWh[phase];
+  }
+  ResponseCmndEnergyTotalYesterdayToday();
 }
 
 void CmndTariff(void) {
@@ -1533,6 +1638,10 @@ void EnergyDrvInit(void) {
   if (TasmotaGlobal.energy_driver) {
     EnergySettingsLoad(0);
     EnergyRtcSettingsLoad();
+#ifdef FIRMWARE_EM_ESP32C6
+    Settings->flag.no_power_on_check = true;         // Equivalent of SetOption21 1
+    Settings->flag6.no_export_energy_today = true;   // Equivalent of SetOption162 1
+#endif
     AddLog(LOG_LEVEL_INFO, PSTR("NRG: Init driver %d"), TasmotaGlobal.energy_driver);
 //  } else {
 //    free(Energy);                       // No energy driver found so release memory
@@ -1558,6 +1667,26 @@ void EnergySnsInit(void) {
         RtcEnergySettings.energy_today_kWh[i] = 0;
         Energy->kWhtoday_offset_init = true;
       }
+#ifdef FIRMWARE_EM_ESP32C6
+      if (Energy->Settings.energy_today_kWh[i] < 0) {
+        Energy->Settings.energy_today_kWh[i] = 0;
+      }
+      if (Energy->Settings.energy_yesterday_kWh[i] < 0) {
+        Energy->Settings.energy_yesterday_kWh[i] = 0;
+      }
+      if (Energy->Settings.energy_total_kWh[i] < 0) {
+        Energy->Settings.energy_total_kWh[i] = 0;
+      }
+      if (RtcEnergySettings.energy_today_kWh[i] < 0) {
+        RtcEnergySettings.energy_today_kWh[i] = 0;
+      }
+      if (RtcEnergySettings.energy_total_kWh[i] < 0) {
+        RtcEnergySettings.energy_total_kWh[i] = 0;
+      }
+      if (Energy->energy_today_offset_kWh[i] < 0) {
+        Energy->energy_today_offset_kWh[i] = 0;
+      }
+#endif
 //    Energy->kWhtoday_ph[i] = 0;       // Reset by EnergyDrvInit()
 //    Energy->kWhtoday_delta[i] = 0;    // Reset by EnergyDrvInit()
       Energy->period_kWh[i] = Energy->energy_today_offset_kWh[i];
@@ -1652,10 +1781,24 @@ void EnergyShow(bool json) {
   float energy_yesterday_kWh[Energy->phase_count];
   float active_power_sum = 0.0f;
   int negative_phases = 0;
+  float active_power_abs[Energy->phase_count];
+  float power_factor_abs[Energy->phase_count];
   for (uint32_t i = 0; i < Energy->phase_count; i++) {
     energy_yesterday_kWh[i] = Energy->Settings.energy_yesterday_kWh[i];
     active_power_sum += Energy->active_power[i];
     negative_phases += (Energy->active_power[i] < 0) ? -1 : 1;
+    active_power_abs[i] = fabsf(Energy->active_power[i]);
+    power_factor_abs[i] = fabsf(power_factor[i]);
+  }
+
+  const char* energy_flow = "idle";
+  const char* energy_flow_label = D_ENERGY_FLOW_IDLE;
+  if (active_power_sum > 5.0f) {
+    energy_flow = "import";
+    energy_flow_label = D_ENERGY_FLOW_IMPORT;
+  } else if (active_power_sum < -5.0f) {
+    energy_flow = "export";
+    energy_flow_label = D_ENERGY_FLOW_EXPORT;
   }
 
   bool energy_tariff = false;
@@ -1685,6 +1828,12 @@ void EnergyShow(bool json) {
       EnergyFmt(energy_yesterday_kWh, Settings->flag2.energy_resolution, 2));
     ResponseAppend_P(PSTR(",\"" D_JSON_TODAY "\":%s"),
       EnergyFmt(Energy->daily_kWh, Settings->flag2.energy_resolution, 2));
+    ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_TOTAL "\":%s"),
+      EnergyFmt(RtcEnergySettings.generated_total_kWh, Settings->flag2.energy_resolution, 2));
+    ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_YESTERDAY "\":%s"),
+      EnergyFmt(Energy->Settings.generated_yesterday_kWh, Settings->flag2.energy_resolution, 2));
+    ResponseAppend_P(PSTR(",\"" D_JSON_GENERATED_TODAY "\":%s"),
+      EnergyFmt(RtcEnergySettings.generated_today_kWh, Settings->flag2.energy_resolution, 2));
 
 /*
  #if defined(SDM630_IMPORT) || defined(SDM72_IMPEXP)
@@ -1724,7 +1873,8 @@ void EnergyShow(bool json) {
     }
 
     ResponseAppend_P(PSTR(",\"" D_JSON_POWERUSAGE "\":%s"),
-        EnergyFmt(Energy->active_power, Settings->flag2.wattage_resolution));
+        EnergyFmt(active_power_abs, Settings->flag2.wattage_resolution));
+    ResponseAppend_P(PSTR(",\"" D_JSON_ENERGY_FLOW "\":\"%s\""), energy_flow);
     if (!Energy->type_dc) {
       if (Energy->current_available && Energy->voltage_available) {
         ResponseAppend_P(PSTR(",\"" D_JSON_APPARENT_POWERUSAGE "\":%s"),
@@ -1732,7 +1882,7 @@ void EnergyShow(bool json) {
         ResponseAppend_P(PSTR(",\"" D_JSON_REACTIVE_POWERUSAGE "\":%s"),
           EnergyFmt(reactive_power, Settings->flag2.wattage_resolution));
         ResponseAppend_P(PSTR(",\"" D_JSON_POWERFACTOR "\":%s"),
-          EnergyFmt(power_factor, 2));
+          EnergyFmt(power_factor_abs, 2));
       }
     }
     if (!isnan(Energy->frequency[0])) {
@@ -1853,6 +2003,7 @@ void EnergyShow(bool json) {
           (no_label) ? "" : itoa(relays[Energy->gui_offset +i], number, 10));
       }
       WSContentSend_P(PSTR("<td>{e}"));              // Last column is units ({e} = </td></tr>)
+      WSContentSend_PD(PSTR("{s}" D_ENERGY_FLOW_STATUS "{m}%s{e}"), energy_flow_label);
       if (Energy->voltage_available) {
         WSContentSend_PD(HTTP_SNS_VOLTAGE, WebEnergyFmt(Energy->voltage, Settings->flag2.voltage_resolution, voltage_common));
       }
@@ -1863,21 +2014,27 @@ void EnergyShow(bool json) {
       if (Energy->current_available) {
         WSContentSend_PD(HTTP_SNS_CURRENT, WebEnergyFmt(Energy->current, Settings->flag2.current_resolution));
       }
-      WSContentSend_PD(HTTP_SNS_POWER, WebEnergyFmt(Energy->active_power, Settings->flag2.wattage_resolution));
+      WSContentSend_PD(HTTP_SNS_POWER, WebEnergyFmt(active_power_abs, Settings->flag2.wattage_resolution));
 //      if (abs(negative_phases) != Energy->phase_count) {  // Provide total power if producing power (PV) and multi phase
       if (Energy->phase_count > 1) {  // Provide total power if multi phase
-         WSContentSend_PD(HTTP_SNS_POWER_TOTAL, WebEnergyFmt(Energy->active_power, Settings->flag2.wattage_resolution, 3));
+         WSContentSend_PD(HTTP_SNS_POWER_TOTAL, WebEnergyFmt(active_power_abs, Settings->flag2.wattage_resolution, 3));
       }
       if (!Energy->type_dc) {
         if (Energy->current_available && Energy->voltage_available) {
           WSContentSend_PD(HTTP_SNS_POWERUSAGE_APPARENT, WebEnergyFmt(apparent_power, Settings->flag2.wattage_resolution));
           WSContentSend_PD(HTTP_SNS_POWERUSAGE_REACTIVE, WebEnergyFmt(reactive_power, Settings->flag2.wattage_resolution));
-          WSContentSend_PD(HTTP_SNS_POWER_FACTOR, WebEnergyFmt(power_factor, 2));
+          WSContentSend_PD(HTTP_SNS_POWER_FACTOR, WebEnergyFmt(power_factor_abs, 2));
         }
       }
       WSContentSend_PD(HTTP_SNS_ENERGY_TODAY, WebEnergyFmt(Energy->daily_kWh, Settings->flag2.energy_resolution, 2));
       WSContentSend_PD(HTTP_SNS_ENERGY_YESTERDAY, WebEnergyFmt(energy_yesterday_kWh, Settings->flag2.energy_resolution, 2));
       WSContentSend_PD(HTTP_SNS_ENERGY_TOTAL, WebEnergyFmt(Energy->total, Settings->flag2.energy_resolution, 2));
+      WSContentSend_PD(PSTR("{s}" D_GENERATED_TODAY "{m}%s " D_UNIT_KILOWATTHOUR "{e}"),
+        WebEnergyFmt(RtcEnergySettings.generated_today_kWh, Settings->flag2.energy_resolution, 2));
+      WSContentSend_PD(PSTR("{s}" D_GENERATED_YESTERDAY "{m}%s " D_UNIT_KILOWATTHOUR "{e}"),
+        WebEnergyFmt(Energy->Settings.generated_yesterday_kWh, Settings->flag2.energy_resolution, 2));
+      WSContentSend_PD(PSTR("{s}" D_GENERATED_TOTAL "{m}%s " D_UNIT_KILOWATTHOUR "{e}"),
+        WebEnergyFmt(RtcEnergySettings.generated_total_kWh, Settings->flag2.energy_resolution, 2));
       if (!isnan(Energy->export_active[0])) {
         uint32_t single = (!isnan(Energy->export_active[1]) && !isnan(Energy->export_active[2])) ? 2 : 1;
         WSContentSend_PD(HTTP_SNS_EXPORT_ACTIVE, WebEnergyFmt(Energy->export_active, Settings->flag2.energy_resolution, single));

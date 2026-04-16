@@ -65,13 +65,13 @@
 
 #ifdef USE_AHT3x
   #define AHTX_CMD     0xBE // Cmd for AHT3x
-  const char ahtTypes[] PROGMEM = "AHT3X|AHT3X";
+  const char ahtTypes[] PROGMEM = D_SENSOR_AHT3X "|" D_SENSOR_AHT3X;
 #elif defined(USE_AHT2x)
   #define AHTX_CMD     0xBE // Cmd for AHT2x
-  const char ahtTypes[] PROGMEM = "AHT2X|AHT2X";
+  const char ahtTypes[] PROGMEM = D_SENSOR_AHT2X "|" D_SENSOR_AHT2X;
 #else
   #define AHTX_CMD     0xE1 // Cmd for AHT1x
-  const char ahtTypes[] PROGMEM = "AHT1X|AHT1X";
+  const char ahtTypes[] PROGMEM = D_SENSOR_AHT1X "|" D_SENSOR_AHT1X;
 #endif
 
 uint8_t AHTSetCalCmd[3]    = { AHTX_CMD, 0x08, 0x00 }; // load factory calibration coeff
@@ -90,7 +90,7 @@ struct {
   float   humidity = NAN;
   float   temperature = NAN;
   uint8_t address;     // bus address
-  char    types[6];   // Sensor type name and address -
+  char    types[32];   // Sensor type name
 } aht1x_sensors[AHT1X_MAX_SENSORS];
 
 bool AHT1XWrite(uint8_t aht1x_idx) {
@@ -187,7 +187,7 @@ void AHT1XShow(bool json) {
   for (uint32_t i = 0; i < aht1x.count; i++) {
     float tem = ConvertTemp(aht1x_sensors[i].temperature);
     float hum = ConvertHumidity(aht1x_sensors[i].humidity);
-    char types[11]; // AHT1X-0x38
+    char types[40];
     strlcpy(types, aht1x_sensors[i].types, sizeof(types));
     if (aht1x.count > 1) {
       snprintf_P(types, sizeof(types), PSTR("%s%c%02X"), aht1x_sensors[i].types, IndexSeparator(), aht1x_sensors[i].address);  // "X-0xXX"

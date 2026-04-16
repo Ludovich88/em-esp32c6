@@ -58,3 +58,12 @@ lib/libesp32/berry/berry
 ## Python virtual environments for Platformio ##
 venv
 .venv
+
+## Local helper scripts and notes ##
+ROBONOMICS_BUILD_REPORT.md
+README.ru.md
+flash_and_capture.bat
+extract_robonomics_address.py
+endless_flasher.py
+build.sh
+build_em_esp32c6_RU.ps1

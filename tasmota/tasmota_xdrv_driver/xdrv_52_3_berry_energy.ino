@@ -65,7 +65,7 @@ extern "C" {
     sizeof(tEnergy),  /* size in bytes */
     108,  /* number of elements */
     be_ctypes_instance_mappings,
-    (const be_ctypes_structure_item_t[108]) {
+    (const be_ctypes_structure_item_t[109]) {
       { "active_power", offsetof(tEnergy, active_power[0]), 0, 0, ctypes_float, 0 },
         { "active_power_2", offsetof(tEnergy, active_power[1]), 0, 0, ctypes_float, 0 },
         { "active_power_3", offsetof(tEnergy, active_power[2]), 0, 0, ctypes_float, 0 },
@@ -102,6 +102,7 @@ extern "C" {
         { "frequency_3", offsetof(tEnergy, frequency[2]), 0, 0, ctypes_float, 0 },
       { "frequency_common", offsetof(tEnergy, frequency_common), 0, 0, ctypes_u8, 0 },
       { "frequency_phases", offsetof(tEnergy, frequency[0]), 0, 0, ctypes_addr, PHASES_ARRAY_FLOAT },
+      { "generated_yesterday_sum", offsetof(tEnergy, generated_yesterday_sum), 0, 0, ctypes_float, 0 },
       { "import_active", offsetof(tEnergy, import_active[0]), 0, 0, ctypes_float, 0 },
         { "import_active_2", offsetof(tEnergy, import_active[1]), 0, 0, ctypes_float, 0 },
         { "import_active_3", offsetof(tEnergy, import_active[2]), 0, 0, ctypes_float, 0 },
