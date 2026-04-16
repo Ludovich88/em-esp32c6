@@ -28,7 +28,12 @@ tasmota/user/*
 tasmota/user_config_override.h
 tasmota/include/local_ca_data.h
 tasmota/include/local_ca_descriptor.h
-variants
+variants/*
+!variants/tasmota/
+variants/tasmota/*
+!variants/tasmota/esp32c6/
+variants/tasmota/esp32c6/*
+!variants/tasmota/esp32c6/pins_arduino.h
 variants3
 build
 build_output/*
